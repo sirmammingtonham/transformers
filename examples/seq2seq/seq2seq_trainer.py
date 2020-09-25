@@ -20,6 +20,64 @@ logger = logging.getLogger(__name__)
 
 
 class Seq2SeqTrainer(Trainer):
+    def __init__(self, data_dir, **kwargs):
+        super().__init__(**kwargs)
+        self.tokenizer.add_special_tokens({'additional_special_tokens': [
+            '<|HOME|>', '<|AWAY|>',
+            '<|PLAYER-START_POSITION|>', '<|PLAYER-MIN|>', '<|PLAYER-PTS|>', '<|PLAYER-FGM|>', '<|PLAYER-FGA|>', '<|PLAYER-FG_PCT|>', '<|PLAYER-FG3M|>', '<|PLAYER-FG3A|>', '<|PLAYER-FG3_PCT|>', '<|PLAYER-FTM|>', '<|PLAYER-FTA|>', '<|PLAYER-FT_PCT|>', '<|PLAYER-OREB|>', '<|PLAYER-DREB|>', '<|PLAYER-REB|>', '<|PLAYER-AST|>', '<|PLAYER-TO|>', '<|PLAYER-STL|>', '<|PLAYER-BLK|>', '<|PLAYER-PF|>', 
+            '<|TEAM-PTS_QTR1|>', '<|TEAM-PTS_QTR2|>', '<|TEAM-PTS_QTR3|>', '<|TEAM-PTS_QTR4|>', '<|TEAM-PTS|>', '<|TEAM-FG_PCT|>', '<|TEAM-FG3_PCT|>', '<|TEAM-FT_PCT|>', '<|TEAM-REB|>', '<|TEAM-AST|>', '<|TEAM-TOV|>', '<|TEAM-WINS|>', '<|TEAM-LOSSES|>', '<|TEAM-CITY|>', '<|TEAM-NAME|>', 
+        ]})
+        self.model.resize_token_embeddings(len(self.tokenizer))
+
+        self.get_freq_sequences(data_dir)
+        self.seq_loss_weight = 2
+    
+    def get_freq_sequences(self, data_dir):
+        big_map = defaultdict(int)
+        with open(os.path.join(data_dir, "train.target"), 'r', encoding='utf-8') as f:
+            for paragraph in f.readlines():
+                words = paragraph.split(' ')
+                for i in range(0, len(words)-2):
+                    li = words[i:i+3]
+                    has_num = False
+                    for tok in li:
+                        num = ''
+                        try:
+                            num = int(tok)
+                        except:
+                            try:
+                                num = text2num(tok)
+                            except:
+                                pass
+                        if isinstance(num, int):
+                            has_num = True
+                    if not has_num:
+                        current_seq = ' '.join(li)
+                        big_map[current_seq] += 1
+        tokens = self.tokenizer.batch_encode_plus(
+            [k for k, v in sorted(big_map.items(), key=lambda item: item[1], reverse=True)][:75], 
+            return_tensors='pt',
+            pad_to_max_length=True
+        )
+        self.freq_seq = {tuple(x[1:3].tolist()): x[4] for x in tokens['input_ids']}
+        print(self.freq_seq)
+    
+    def _trigram_penalty(self, output):
+        with torch.no_grad():
+            penalty_factor = torch.ones(len(output))
+            # get output of current step
+            for batch in range(len(output)):
+                penalty_factor[batch] += 1
+                probs = torch.argmax(output[batch], dim=-1)#.view(-1, self.config.vocab_size), dim=-1)
+                for i in range(0, len(probs)-2):
+                    li = tuple(probs[i:i+2].tolist())
+                    if li in self.freq_seq:
+                        if self.freq_seq[li] != probs[i+2]:
+                            penalty_factor[batch] += 1
+
+            penalty = torch.mean(penalty_factor)
+        return torch.log(penalty) if penalty > 1 else torch.log(penalty)*self.seq_loss_weight
+    
     def _get_train_sampler(self) -> Optional[torch.utils.data.sampler.Sampler]:
         if isinstance(self.train_dataset, torch.utils.data.IterableDataset):
             return None
@@ -54,6 +112,7 @@ class Seq2SeqTrainer(Trainer):
             loss, nll_loss = label_smoothed_nll_loss(
                 lprobs, labels, self.args.label_smoothing, ignore_index=ignore_index
             )
+        loss += self._trigram_penalty(logits)
         return loss
 
     def prediction_step(

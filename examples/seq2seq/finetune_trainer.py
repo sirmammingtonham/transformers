@@ -163,28 +163,28 @@ class DataTrainingArguments:
         metadata={"help": "Task name, summarization (or summarization_{dataset} for pegasus) or translation"},
     )
     max_source_length: Optional[int] = field(
-        default=1024,
+        default=1300,
         metadata={
             "help": "The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
         },
     )
     max_target_length: Optional[int] = field(
-        default=128,
+        default=600,
         metadata={
             "help": "The maximum total sequence length for target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
         },
     )
     val_max_target_length: Optional[int] = field(
-        default=142,
+        default=600,
         metadata={
             "help": "The maximum total sequence length for validation target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
         },
     )
     test_max_target_length: Optional[int] = field(
-        default=142,
+        default=600,
         metadata={
             "help": "The maximum total sequence length for test target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
@@ -369,6 +369,7 @@ def main():
 
     # Initialize our Trainer
     trainer = Seq2SeqTrainer(
+        data_args.data_dir,
         model=model,
         args=training_args,
         train_dataset=train_dataset,

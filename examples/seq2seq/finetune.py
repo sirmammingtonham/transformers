@@ -60,8 +60,17 @@ class SummarizationModule(BaseTransformer):
                 raise ValueError("--sortish_sampler and --max_tokens_per_batch may not be used simultaneously")
 
         super().__init__(hparams, num_labels=None, mode=self.mode, **kwargs)
+        # print(self.tokenizer.model_max_length)
+
+        self.tokenizer.add_special_tokens({'additional_special_tokens': [
+            '<|HOME|>', '<|AWAY|>',
+            '<|PLAYER-START_POSITION|>', '<|PLAYER-MIN|>', '<|PLAYER-PTS|>', '<|PLAYER-FGM|>', '<|PLAYER-FGA|>', '<|PLAYER-FG_PCT|>', '<|PLAYER-FG3M|>', '<|PLAYER-FG3A|>', '<|PLAYER-FG3_PCT|>', '<|PLAYER-FTM|>', '<|PLAYER-FTA|>', '<|PLAYER-FT_PCT|>', '<|PLAYER-OREB|>', '<|PLAYER-DREB|>', '<|PLAYER-REB|>', '<|PLAYER-AST|>', '<|PLAYER-TO|>', '<|PLAYER-STL|>', '<|PLAYER-BLK|>', '<|PLAYER-PF|>', 
+            '<|TEAM-PTS_QTR1|>', '<|TEAM-PTS_QTR2|>', '<|TEAM-PTS_QTR3|>', '<|TEAM-PTS_QTR4|>', '<|TEAM-PTS|>', '<|TEAM-FG_PCT|>', '<|TEAM-FG3_PCT|>', '<|TEAM-FT_PCT|>', '<|TEAM-REB|>', '<|TEAM-AST|>', '<|TEAM-TOV|>', '<|TEAM-WINS|>', '<|TEAM-LOSSES|>', '<|TEAM-CITY|>', '<|TEAM-NAME|>', 
+        ]})
+        self.model.resize_token_embeddings(len(self.tokenizer))
+        print(len(self.tokenizer))
         use_task_specific_params(self.model, "summarization")
-        save_git_info(self.hparams.output_dir)
+        # save_git_info(self.hparams.output_dir)
         self.metrics_save_path = Path(self.output_dir) / "metrics.json"
         self.hparams_save_path = Path(self.output_dir) / "hparams.pkl"
         pickle_save(self.hparams, self.hparams_save_path)
@@ -95,7 +104,7 @@ class SummarizationModule(BaseTransformer):
             freeze_params(self.model.get_encoder())
             assert_all_frozen(self.model.get_encoder())
 
-        self.hparams.git_sha = get_git_info()["repo_sha"]
+        # self.hparams.git_sha = get_git_info()["repo_sha"]
         self.num_workers = hparams.num_workers
         self.decoder_start_token_id = None  # default to config
         if self.model.config.decoder_start_token_id is None and isinstance(self.tokenizer, MBartTokenizer):
@@ -111,6 +120,55 @@ class SummarizationModule(BaseTransformer):
         else:
             self.eval_max_length = self.model.config.max_length
         self.val_metric = self.default_val_metric if self.hparams.val_metric is None else self.hparams.val_metric
+
+        self.get_freq_sequences(self.hparams.data_dir)
+        self.seq_loss_weight = 2
+
+    def get_freq_sequences(self, data_dir):
+        big_map = defaultdict(int)
+        with open(os.path.join(data_dir, "train.target"), 'r', encoding='utf-8') as f:
+            for paragraph in f.readlines():
+                words = paragraph.split(' ')
+                for i in range(0, len(words)-2):
+                    li = words[i:i+3]
+                    has_num = False
+                    for tok in li:
+                        num = ''
+                        try:
+                            num = int(tok)
+                        except:
+                            try:
+                                num = text2num(tok)
+                            except:
+                                pass
+                        if isinstance(num, int):
+                            has_num = True
+                    if not has_num:
+                        current_seq = ' '.join(li)
+                        big_map[current_seq] += 1
+        tokens = self.tokenizer.batch_encode_plus(
+            [k for k, v in sorted(big_map.items(), key=lambda item: item[1], reverse=True)][:75], 
+            return_tensors='pt',
+            pad_to_max_length=True
+        )
+        self.freq_seq = {tuple(x[1:3].tolist()): x[4] for x in tokens['input_ids']}
+        print(self.freq_seq)
+    
+    def _trigram_penalty(self, output):
+        with torch.no_grad():
+            penalty_factor = torch.ones(len(output))
+            # get output of current step
+            for batch in range(len(output)):
+                penalty_factor[batch] += 1
+                probs = torch.argmax(output[batch], dim=-1)#.view(-1, self.config.vocab_size), dim=-1)
+                for i in range(0, len(probs)-2):
+                    li = tuple(probs[i:i+2].tolist())
+                    if li in self.freq_seq:
+                        if self.freq_seq[li] != probs[i+2]:
+                            penalty_factor[batch] += 1
+
+            penalty = torch.mean(penalty_factor)
+        return torch.log(penalty) if penalty > 1 else torch.log(penalty)*self.seq_loss_weight
 
     def freeze_embeds(self):
         """Freeze token embeddings and positional embeddings for bart, just token embeddings for t5."""
@@ -146,8 +204,12 @@ class SummarizationModule(BaseTransformer):
         else:
             decoder_input_ids = shift_tokens_right(tgt_ids, pad_token_id)
 
-        outputs = self(src_ids, attention_mask=src_mask, decoder_input_ids=decoder_input_ids, use_cache=False)
+        outputs = self(src_ids, attention_mask=src_mask, decoder_input_ids=decoder_input_ids, use_cache=False, #return_dict=True
+        )
+
+        print(outputs[0].shape)
         lm_logits = outputs[0]
+
         if self.hparams.label_smoothing == 0:
             # Same behavior as modeling_bart.py, besides ignoring pad_token_id
             ce_loss_fct = torch.nn.CrossEntropyLoss(ignore_index=pad_token_id)
@@ -159,6 +221,12 @@ class SummarizationModule(BaseTransformer):
             loss, nll_loss = label_smoothed_nll_loss(
                 lprobs, tgt_ids, self.hparams.label_smoothing, ignore_index=pad_token_id
             )
+        penalty = self._trigram_penalty(outputs[0])
+        # print(loss)
+        # print(penalty)
+        loss += penalty
+        # print(loss)
+        # print(penalty.shape)
         return (loss,)
 
     @property
@@ -299,28 +367,28 @@ class SummarizationModule(BaseTransformer):
         add_generic_args(parser, root_dir)
         parser.add_argument(
             "--max_source_length",
-            default=1024,
+            default=1300,
             type=int,
             help="The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded.",
         )
         parser.add_argument(
             "--max_target_length",
-            default=56,
+            default=600,
             type=int,
             help="The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded.",
         )
         parser.add_argument(
             "--val_max_target_length",
-            default=142,  # these defaults are optimized for CNNDM. For xsum, see README.md.
+            default=600,
             type=int,
             help="The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded.",
         )
         parser.add_argument(
             "--test_max_target_length",
-            default=142,
+            default=600,
             type=int,
             help="The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded.",
