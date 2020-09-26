@@ -36,7 +36,7 @@ class Seq2SeqTrainer(Trainer):
                 for i in range(0, len(probs)-2):
                     li = tuple(probs[i:i+2].tolist())
                     if li in self.freq_seq:
-                        if self.freq_seq[li] != probs[i+2]:
+                        if self.freq_seq[li] != probs[i+2].cpu():
                             penalty_factor[batch] += 1
 
             penalty = torch.mean(penalty_factor)
@@ -63,20 +63,20 @@ class Seq2SeqTrainer(Trainer):
         labels = inputs.pop("labels")
         outputs = model(**inputs, use_cache=False)
         logits = outputs[0]
-        return self._compute_loss(logits, labels, ignore_index=model.config.pad_token_id)
+        return self._compute_loss(logits, labels, ignore_index=self._actual_model(model).config.pad_token_id)
 
     def _compute_loss(self, logits, labels, ignore_index):
         if self.args.label_smoothing == 0:
             # Same behavior as modeling_bart.py
             loss_fct = torch.nn.CrossEntropyLoss(ignore_index=ignore_index)
-            assert logits.shape[-1] == self.model.config.vocab_size
+            assert logits.shape[-1] == self._actual_model(self.model).config.vocab_size
             loss = loss_fct(logits.view(-1, logits.shape[-1]), labels.view(-1))
         else:
             lprobs = torch.nn.functional.log_softmax(logits, dim=-1)
             loss, nll_loss = label_smoothed_nll_loss(
                 lprobs, labels, self.args.label_smoothing, ignore_index=ignore_index
             )
-        loss += self._trigram_penalty(logits)
+        loss = loss + self._trigram_penalty(logits)
         return loss
 
     def prediction_step(

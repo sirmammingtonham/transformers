@@ -4,6 +4,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -94,14 +95,14 @@ class Seq2SeqDataCollator:
     def _encode(self, batch) -> Dict[str, torch.Tensor]:
         batch_encoding = self.tokenizer.prepare_seq2seq_batch(
             [x["src_texts"] for x in batch],
-            src_lang=self.data_args.src_lang,
+            # src_lang=self.data_args.src_lang,
             tgt_texts=[x["tgt_texts"] for x in batch],
-            tgt_lang=self.data_args.tgt_lang,
+            # tgt_lang=self.data_args.tgt_lang,
             max_length=self.data_args.max_source_length,
             max_target_length=self.data_args.max_target_length,
             padding="max_length" if self.tpu_num_cores is not None else "longest",  # TPU hack
             return_tensors="pt",
-            add_prefix_space=self.add_prefix_space,
+            # add_prefix_space=self.add_prefix_space,
         )
         return batch_encoding.data
 
@@ -197,7 +198,7 @@ class DataTrainingArguments:
     tgt_lang: Optional[str] = field(default=None, metadata={"help": "Target language id for translation."})
     eval_beams: Optional[int] = field(default=None, metadata={"help": "# num_beams to use for evaluation."})
 
-def get_freq_sequences(self, data_dir):
+def get_freq_sequences(data_dir, tokenizer):
         big_map = defaultdict(int)
         with open(os.path.join(data_dir, "train.target"), 'r', encoding='utf-8') as f:
             for paragraph in f.readlines():
@@ -219,7 +220,7 @@ def get_freq_sequences(self, data_dir):
                     if not has_num:
                         current_seq = ' '.join(li)
                         big_map[current_seq] += 1
-        tokens = self.tokenizer.batch_encode_plus(
+        tokens = tokenizer.batch_encode_plus(
             [k for k, v in sorted(big_map.items(), key=lambda item: item[1], reverse=True)][:75], 
             return_tensors='pt',
             pad_to_max_length=True
@@ -299,7 +300,7 @@ def main():
         ]})
     model.resize_token_embeddings(len(tokenizer))
 
-    freq_seqs = get_freq_sequences(data_args.data_dir)
+    freq_seqs = get_freq_sequences(data_args.data_dir, tokenizer)
 
     # use task specific params
     use_task_specific_params(model, data_args.task)
