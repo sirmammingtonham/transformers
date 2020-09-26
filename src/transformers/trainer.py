@@ -103,7 +103,6 @@ logger = logging.get_logger(__name__)
 def torch_distributed_zero_first(local_rank: int):
     """
     Decorator to make all processes in distributed training wait for each local_master to do something.
-
     Args:
         local_rank (:obj:`int`): The rank of the local process.
     """
@@ -118,7 +117,6 @@ class SequentialDistributedSampler(Sampler):
     """
     Distributed Sampler that subsamples indicies sequentially,
     making it easier to collate all results at the end.
-
     Even though we only use this sampler for eval and predict (no training),
     which means that the model params won't have to be synced (i.e. will not hang
     for synchronization even if varied number of forward passes), we still add extra
@@ -172,7 +170,6 @@ class Trainer:
     """
     Trainer is a simple but feature-complete training and eval loop for PyTorch,
     optimized for 🤗 Transformers.
-
     Args:
         model (:class:`~transformers.PreTrainedModel`, `optional`):
             The model to train, evaluate or use for predictions. If not provided, a ``model_init`` must be passed.
@@ -336,10 +333,8 @@ class Trainer:
     def get_train_dataloader(self) -> DataLoader:
         """
         Returns the training :class:`~torch.utils.data.DataLoader`.
-
         Will use no sampler if :obj:`self.train_dataset` is a :obj:`torch.utils.data.IterableDataset`, a random sampler
         (adapted to distributed training if necessary) otherwise.
-
         Subclass and override this method if you want to inject some custom behavior.
         """
         if self.train_dataset is None:
@@ -368,12 +363,9 @@ class Trainer:
     def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
         """
         Returns the evaluation :class:`~torch.utils.data.DataLoader`.
-
         Will use no sampler if :obj:`self.eval_dataset` is a :obj:`torch.utils.data.IterableDataset`, a sequential
         sampler (adapted to distributed training if necessary) otherwise.
-
         Subclass and override this method if you want to inject some custom behavior.
-
         Args:
             eval_dataset (:obj:`torch.utils.data.dataset.Dataset`, `optional`):
                 If provided, will override :obj:`self.eval_dataset`. If it is an :obj:`datasets.Dataset`, columns not
@@ -398,12 +390,9 @@ class Trainer:
     def get_test_dataloader(self, test_dataset: Dataset) -> DataLoader:
         """
         Returns the test :class:`~torch.utils.data.DataLoader`.
-
         Will use no sampler if :obj:`test_dataset` is a :obj:`torch.utils.data.IterableDataset`, a sequential
         sampler (adapted to distributed training if necessary) otherwise.
-
         Subclass and override this method if you want to inject some custom behavior.
-
         Args:
             eval_dataset (:obj:`torch.utils.data.dataset.Dataset`, `optional`):
                 The test dataset to use. If it is an :obj:`datasets.Dataset`, columns not accepted by the
@@ -425,7 +414,6 @@ class Trainer:
     def create_optimizer_and_scheduler(self, num_training_steps: int):
         """
         Setup the optimizer and the learning rate scheduler.
-
         We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
         Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
         """
@@ -455,10 +443,8 @@ class Trainer:
     def setup_wandb(self):
         """
         Setup the optional Weights & Biases (`wandb`) integration.
-
         One can subclass and override this method to customize the setup if needed. Find more information
         `here <https://docs.wandb.com/huggingface>`__. You can also override the following environment variables:
-
         Environment:
             WANDB_WATCH:
                 (Optional, ["gradients", "all", "false"]) "gradients" by default, set to "false" to disable gradient logging
@@ -496,7 +482,6 @@ class Trainer:
     def setup_comet(self):
         """
         Setup the optional Comet.ml integration.
-
         Environment:
             COMET_MODE:
                 (Optional): str - "OFFLINE", "ONLINE", or "DISABLED"
@@ -504,7 +489,6 @@ class Trainer:
                 (Optional): str - Comet.ml project name for experiments
             COMET_OFFLINE_DIRECTORY:
                 (Optional): str - folder to use for saving offline experiments when `COMET_MODE` is "OFFLINE"
-
         For a number of configurable items in the environment,
         see `here <https://www.comet.ml/docs/python-sdk/advanced/#comet-configuration-variables>`__
         """
@@ -596,7 +580,6 @@ class Trainer:
     def train(self, model_path: Optional[str] = None, trial: Union["optuna.Trial", Dict[str, Any]] = None):
         """
         Main training entry point.
-
         Args:
             model_path (:obj:`str`, `optional`):
                 Local path to the model if the model to train has been instantiated from a local path. If present,
@@ -695,7 +678,7 @@ class Trainer:
             # set global_step to global_step of last saved checkpoint from model path
             try:
                 self.global_step = int(model_path.split("-")[-1].split(os.path.sep)[0])
-                self.total_flos = getattr(model.config, "total_flos", 0)
+                self.total_flos = getattr(self._actual_model(model).config, "total_flos", 0)
 
                 epochs_trained = self.global_step // num_update_steps_per_epoch
                 steps_trained_in_current_epoch = self.global_step % (num_update_steps_per_epoch)
@@ -871,14 +854,11 @@ class Trainer:
         Launch an hyperparameter search using ``optuna`` or ``Ray Tune``. The optimized quantity is determined by
         :obj:`compute_objectie`, which defaults to a function returning the evaluation loss when no metric is provided,
         the sum of all metrics otherwise.
-
         .. warning::
-
             To use this method, you need to have provided a ``model_init`` when initializing your
             :class:`~transformers.Trainer`: we need to reinitialize the model at each new run. This is incompatible
             with the ``optimizers`` argument, so you need to subclass :class:`~transformers.Trainer` and override the
             method :meth:`~transformers.Trainer.create_optimizer_and_scheduler` for custom optimizer/scheduler.
-
         Args:
             hp_space (:obj:`Callable[["optuna.Trial"], Dict[str, float]]`, `optional`):
                 A function that defines the hyperparameter search space. Will default to
@@ -899,10 +879,8 @@ class Trainer:
             kwargs:
                 Additional keyword arguments passed along to :obj:`optuna.create_study` or :obj:`ray.tune.run`. For
                 more information see:
-
                 - the documentation of `optuna.create_study <https://optuna.readthedocs.io/en/stable/reference/alias_generated/optuna.create_study.html#optuna.create_study>`__
                 - the documentation of `tune.run <https://docs.ray.io/en/latest/tune/api_docs/execution.html#tune-run>`__
-
         Returns:
             :class:`transformers.trainer_utils.BestRun`: All the informations about the best run.
         """
@@ -940,9 +918,7 @@ class Trainer:
     def log(self, logs: Dict[str, float], iterator: Optional[tqdm] = None) -> None:
         """
         Log :obj:`logs` on the various objects watching training.
-
         Subclass and override this method to inject custom behavior.
-
         Args:
             logs (:obj:`Dict[str, float]`):
                 The values to log.
@@ -1019,18 +995,14 @@ class Trainer:
     def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
-
         Subclass and override to inject custom behavior.
-
         Args:
             model (:obj:`nn.Module`):
                 The model to train.
             inputs (:obj:`Dict[str, Union[torch.Tensor, Any]]`):
                 The inputs and targets of the model.
-
                 The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
                 argument :obj:`labels`. Check your model's documentation for all accepted arguments.
-
         Return:
             :obj:`torch.Tensor`: The tensor with training loss on this batch.
         """
@@ -1069,7 +1041,6 @@ class Trainer:
     def compute_loss(self, model, inputs):
         """
         How the loss is computed by Trainer. By default, all models return the loss in the first element.
-
         Subclass and override for custom behavior.
         """
         outputs = model(**inputs)
@@ -1083,9 +1054,7 @@ class Trainer:
         """
         Whether or not this process is the local (e.g., on one machine if training in a distributed fashion on
         several machines) main process.
-
         .. warning::
-
             This method is deprecated, use :meth:`~transformers.Trainer.is_local_process_zero` instead.
         """
         warnings.warn("This method is deprecated, use `Trainer.is_local_process_zero()` instead.", FutureWarning)
@@ -1105,9 +1074,7 @@ class Trainer:
         """
         Whether or not this process is the global main process (when training in a distributed fashion on
         several machines, this is only going to be :obj:`True` for one process).
-
         .. warning::
-
             This method is deprecated, use :meth:`~transformers.Trainer.is_world_process_zero` instead.
         """
         warnings.warn("This method is deprecated, use `Trainer.is_world_process_zero()` instead.", FutureWarning)
@@ -1126,7 +1093,6 @@ class Trainer:
     def save_model(self, output_dir: Optional[str] = None):
         """
         Will save the model, so you can reload it using :obj:`from_pretrained()`.
-
         Will only save from the world_master process (unless in TPUs).
         """
 
@@ -1219,17 +1185,13 @@ class Trainer:
     def evaluate(self, eval_dataset: Optional[Dataset] = None) -> Dict[str, float]:
         """
         Run evaluation and returns metrics.
-
         The calling script will be responsible for providing a method to compute metrics, as they are
         task-dependent (pass it to the init :obj:`compute_metrics` argument).
-
         You can also subclass and override this method to inject custom behavior.
-
         Args:
             eval_dataset (:obj:`Dataset`, `optional`):
                 Pass a dataset if you wish to override :obj:`self.eval_dataset`. If it is an :obj:`datasets.Dataset`,
                 columns not accepted by the ``model.forward()`` method are automatically removed.
-
         Returns:
             A dictionary containing the evaluation loss and the potential metrics computed from the predictions.
         """
@@ -1248,15 +1210,12 @@ class Trainer:
     def predict(self, test_dataset: Dataset) -> PredictionOutput:
         """
         Run prediction and returns predictions and potential metrics.
-
         Depending on the dataset and your use case, your test dataset may contain labels.
         In that case, this method will also return metrics, like in :obj:`evaluate()`.
-
         Args:
             test_dataset (:obj:`Dataset`):
                 Dataset to run the predictions on. If it is an :obj:`datasets.Dataset`, columns not accepted by the
                 ``model.forward()`` method are automatically removed.
-
         Returns:
             `NamedTuple`:
             predictions (:obj:`np.ndarray`):
@@ -1275,7 +1234,6 @@ class Trainer:
     ) -> PredictionOutput:
         """
         Prediction/evaluation loop, shared by :obj:`Trainer.evaluate()` and :obj:`Trainer.predict()`.
-
         Works both with or without labels.
         """
         if hasattr(self, "_prediction_loop"):
@@ -1382,20 +1340,16 @@ class Trainer:
     ) -> Tuple[Optional[float], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Perform an evaluation step on :obj:`model` using obj:`inputs`.
-
         Subclass and override to inject custom behavior.
-
         Args:
             model (:obj:`nn.Module`):
                 The model to evaluate.
             inputs (:obj:`Dict[str, Union[torch.Tensor, Any]]`):
                 The inputs and targets of the model.
-
                 The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
                 argument :obj:`labels`. Check your model's documentation for all accepted arguments.
             prediction_loss_only (:obj:`bool`):
                 Whether or not to return the loss only.
-
         Return:
             Tuple[Optional[float], Optional[torch.Tensor], Optional[torch.Tensor]]:
             A tuple with the loss, logits and labels (each being optional).
@@ -1437,26 +1391,36 @@ class Trainer:
         For models that inherit from :class:`~transformers.PretrainedModel`, uses
         that method to compute the number of floating point operations for every backward + forward pass. If using
         another model, either implement such a method in the model or subclass and override this method.
-
         Args:
             model (:obj:`nn.Module`):
                 The model to evaluate.
             inputs (:obj:`Dict[str, Union[torch.Tensor, Any]]`):
                 The inputs and targets of the model.
-
         Returns:
             :obj:`int`: The number of floating-point operations.
         """
 
-        if isinstance(self.model, torch.nn.DataParallel) or isinstance(
-            self.model, torch.nn.parallel.DistributedDataParallel
-        ):
-            model = self.model.module
-        else:
-            model = self.model
+        model = self._actual_model(self.model)
 
         if hasattr(model, "floating_point_ops"):
             return model.floating_point_ops(inputs)
 
         else:
             return 0
+
+    @staticmethod
+    def _actual_model(
+        model: Union[torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel, torch.nn.modules.Module]
+    ) -> torch.nn.modules.Module:
+        """
+        Args:
+            model: (:obj:`Union[torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel, torch.nn.modules.Module]`):
+                Model object used during training
+        Returns:
+            :obj:`torch.nn.modules.Module`: unwrapped module
+        """
+        if isinstance(model, torch.nn.DataParallel) or isinstance(model, torch.nn.parallel.DistributedDataParallel):
+            model = model.module
+        else:
+            model = model
+        return model
