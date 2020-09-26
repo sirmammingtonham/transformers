@@ -25,6 +25,7 @@ from zipfile import ZipFile, is_zipfile
 import numpy as np
 from tqdm.auto import tqdm
 
+import pycurl
 import requests
 from filelock import FileLock
 
@@ -772,27 +773,30 @@ def http_get(url, temp_file, proxies=None, resume_size=0, user_agent: Union[Dict
         ua += "; " + "; ".join("{}/{}".format(k, v) for k, v in user_agent.items())
     elif isinstance(user_agent, str):
         ua += "; " + user_agent
-    headers = {"user-agent": ua}
+    headers = ["user-agent: ua"]
     if resume_size > 0:
-        headers["Range"] = "bytes=%d-" % (resume_size,)
-    response = requests.get(url, stream=True, proxies=proxies, headers=headers)
-    if response.status_code == 416:  # Range not satisfiable
-        return
-    content_length = response.headers.get("Content-Length")
-    total = resume_size + int(content_length) if content_length is not None else None
-    progress = tqdm(
-        unit="B",
-        unit_scale=True,
-        total=total,
-        initial=resume_size,
-        desc="Downloading",
-        disable=bool(logging.get_verbosity() == logging.NOTSET),
-    )
-    for chunk in response.iter_content(chunk_size=1024):
-        if chunk:  # filter out keep-alive new chunks
-            progress.update(len(chunk))
-            temp_file.write(chunk)
-    progress.close()
+        headers.append(["Range: bytes={resume_size}-"])
+    
+    from sys import stderr as STREAM
+    kb = 1024
+    def status(download_t, download_d, upload_t, upload_d):
+        STREAM.write('Downloading: {}/{} kiB ({}%)\r'.format(
+            str(int(download_d/kb)),
+            str(int(download_t/kb)),
+            str(int(download_d/download_t*100) if download_t > 0 else 0)
+        ))
+        STREAM.flush()
+
+    
+    c = pycurl.Curl()
+    c.setopt(c.URL, url)
+    c.setopt(c.WRITEDATA, temp_file)
+    c.setopt(c.HTTPHEADER, headers)
+
+    c.setopt(c.NOPROGRESS, False)
+    c.setopt(c.XFERINFOFUNCTION, status)
+    c.perform()
+    c.close()
 
 
 def get_from_cache(

@@ -197,6 +197,35 @@ class DataTrainingArguments:
     tgt_lang: Optional[str] = field(default=None, metadata={"help": "Target language id for translation."})
     eval_beams: Optional[int] = field(default=None, metadata={"help": "# num_beams to use for evaluation."})
 
+def get_freq_sequences(self, data_dir):
+        big_map = defaultdict(int)
+        with open(os.path.join(data_dir, "train.target"), 'r', encoding='utf-8') as f:
+            for paragraph in f.readlines():
+                words = paragraph.split(' ')
+                for i in range(0, len(words)-2):
+                    li = words[i:i+3]
+                    has_num = False
+                    for tok in li:
+                        num = ''
+                        try:
+                            num = int(tok)
+                        except:
+                            try:
+                                num = text2num(tok)
+                            except:
+                                pass
+                        if isinstance(num, int):
+                            has_num = True
+                    if not has_num:
+                        current_seq = ' '.join(li)
+                        big_map[current_seq] += 1
+        tokens = self.tokenizer.batch_encode_plus(
+            [k for k, v in sorted(big_map.items(), key=lambda item: item[1], reverse=True)][:75], 
+            return_tensors='pt',
+            pad_to_max_length=True
+        )
+        return {tuple(x[1:3].tolist()): x[4] for x in tokens['input_ids']}
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
@@ -255,12 +284,22 @@ def main():
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
     )
+    
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_args.model_name_or_path,
         from_tf=".ckpt" in model_args.model_name_or_path,
         config=config,
         cache_dir=model_args.cache_dir,
     )
+
+    tokenizer.add_special_tokens({'additional_special_tokens': [
+            '<|HOME|>', '<|AWAY|>',
+            '<|PLAYER-START_POSITION|>', '<|PLAYER-MIN|>', '<|PLAYER-PTS|>', '<|PLAYER-FGM|>', '<|PLAYER-FGA|>', '<|PLAYER-FG_PCT|>', '<|PLAYER-FG3M|>', '<|PLAYER-FG3A|>', '<|PLAYER-FG3_PCT|>', '<|PLAYER-FTM|>', '<|PLAYER-FTA|>', '<|PLAYER-FT_PCT|>', '<|PLAYER-OREB|>', '<|PLAYER-DREB|>', '<|PLAYER-REB|>', '<|PLAYER-AST|>', '<|PLAYER-TO|>', '<|PLAYER-STL|>', '<|PLAYER-BLK|>', '<|PLAYER-PF|>', 
+            '<|TEAM-PTS_QTR1|>', '<|TEAM-PTS_QTR2|>', '<|TEAM-PTS_QTR3|>', '<|TEAM-PTS_QTR4|>', '<|TEAM-PTS|>', '<|TEAM-FG_PCT|>', '<|TEAM-FG3_PCT|>', '<|TEAM-FT_PCT|>', '<|TEAM-REB|>', '<|TEAM-AST|>', '<|TEAM-TOV|>', '<|TEAM-WINS|>', '<|TEAM-LOSSES|>', '<|TEAM-CITY|>', '<|TEAM-NAME|>', 
+        ]})
+    model.resize_token_embeddings(len(tokenizer))
+
+    freq_seqs = get_freq_sequences(data_args.data_dir)
 
     # use task specific params
     use_task_specific_params(model, data_args.task)
@@ -369,6 +408,7 @@ def main():
 
     # Initialize our Trainer
     trainer = Seq2SeqTrainer(
+        freq_seqs,
         data_args.data_dir,
         model=model,
         args=training_args,
