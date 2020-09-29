@@ -67,6 +67,8 @@ class SummarizationModule(BaseTransformer):
             '<|PLAYER-START_POSITION|>', '<|PLAYER-MIN|>', '<|PLAYER-PTS|>', '<|PLAYER-FGM|>', '<|PLAYER-FGA|>', '<|PLAYER-FG_PCT|>', '<|PLAYER-FG3M|>', '<|PLAYER-FG3A|>', '<|PLAYER-FG3_PCT|>', '<|PLAYER-FTM|>', '<|PLAYER-FTA|>', '<|PLAYER-FT_PCT|>', '<|PLAYER-OREB|>', '<|PLAYER-DREB|>', '<|PLAYER-REB|>', '<|PLAYER-AST|>', '<|PLAYER-TO|>', '<|PLAYER-STL|>', '<|PLAYER-BLK|>', '<|PLAYER-PF|>', 
             '<|TEAM-PTS_QTR1|>', '<|TEAM-PTS_QTR2|>', '<|TEAM-PTS_QTR3|>', '<|TEAM-PTS_QTR4|>', '<|TEAM-PTS|>', '<|TEAM-FG_PCT|>', '<|TEAM-FG3_PCT|>', '<|TEAM-FT_PCT|>', '<|TEAM-REB|>', '<|TEAM-AST|>', '<|TEAM-TOV|>', '<|TEAM-WINS|>', '<|TEAM-LOSSES|>', '<|TEAM-CITY|>', '<|TEAM-NAME|>', 
         ]})
+        # self.tokenizer.model_max_length = 1300
+        # self.tokenizer.max_length = 1300
         self.model.resize_token_embeddings(len(self.tokenizer))
         print(len(self.tokenizer))
         use_task_specific_params(self.model, "summarization")
@@ -164,7 +166,7 @@ class SummarizationModule(BaseTransformer):
                 for i in range(0, len(probs)-2):
                     li = tuple(probs[i:i+2].tolist())
                     if li in self.freq_seq:
-                        if self.freq_seq[li] != probs[i+2]:
+                        if self.freq_seq[li] != probs[i+2].cpu():
                             penalty_factor[batch] += 1
 
             penalty = torch.mean(penalty_factor)
@@ -224,7 +226,7 @@ class SummarizationModule(BaseTransformer):
         penalty = self._trigram_penalty(outputs[0])
         # print(loss)
         # print(penalty)
-        loss += penalty
+        loss = loss + penalty
         # print(loss)
         # print(penalty.shape)
         return (loss,)
@@ -367,7 +369,7 @@ class SummarizationModule(BaseTransformer):
         add_generic_args(parser, root_dir)
         parser.add_argument(
             "--max_source_length",
-            default=1300,
+            default=1024,
             type=int,
             help="The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded.",

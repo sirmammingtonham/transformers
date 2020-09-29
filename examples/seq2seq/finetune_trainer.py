@@ -148,6 +148,7 @@ class ModelArguments:
     )
     freeze_encoder: bool = field(default=False, metadata={"help": "Whether tp freeze the encoder."})
     freeze_embeds: bool = field(default=False, metadata={"help": "Whether  to freeze the embeddings."})
+    trigram_loss: bool = field(default=False, metadata={"help": "Whether to add trigram penalty during loss calculation."})
 
 
 @dataclass
@@ -164,7 +165,7 @@ class DataTrainingArguments:
         metadata={"help": "Task name, summarization (or summarization_{dataset} for pegasus) or translation"},
     )
     max_source_length: Optional[int] = field(
-        default=1300,
+        default=1024,
         metadata={
             "help": "The maximum total input sequence length after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
@@ -223,7 +224,7 @@ def get_freq_sequences(data_dir, tokenizer):
         tokens = tokenizer.batch_encode_plus(
             [k for k, v in sorted(big_map.items(), key=lambda item: item[1], reverse=True)][:75], 
             return_tensors='pt',
-            pad_to_max_length=True
+            padding='max_length'
         )
         return {tuple(x[1:3].tolist()): x[4] for x in tokens['input_ids']}
 
@@ -298,12 +299,16 @@ def main():
             '<|PLAYER-START_POSITION|>', '<|PLAYER-MIN|>', '<|PLAYER-PTS|>', '<|PLAYER-FGM|>', '<|PLAYER-FGA|>', '<|PLAYER-FG_PCT|>', '<|PLAYER-FG3M|>', '<|PLAYER-FG3A|>', '<|PLAYER-FG3_PCT|>', '<|PLAYER-FTM|>', '<|PLAYER-FTA|>', '<|PLAYER-FT_PCT|>', '<|PLAYER-OREB|>', '<|PLAYER-DREB|>', '<|PLAYER-REB|>', '<|PLAYER-AST|>', '<|PLAYER-TO|>', '<|PLAYER-STL|>', '<|PLAYER-BLK|>', '<|PLAYER-PF|>', 
             '<|TEAM-PTS_QTR1|>', '<|TEAM-PTS_QTR2|>', '<|TEAM-PTS_QTR3|>', '<|TEAM-PTS_QTR4|>', '<|TEAM-PTS|>', '<|TEAM-FG_PCT|>', '<|TEAM-FG3_PCT|>', '<|TEAM-FT_PCT|>', '<|TEAM-REB|>', '<|TEAM-AST|>', '<|TEAM-TOV|>', '<|TEAM-WINS|>', '<|TEAM-LOSSES|>', '<|TEAM-CITY|>', '<|TEAM-NAME|>', 
         ]})
+    # tokenizer.model_max_length = 1300
+    # tokenizer.max_length = 1300
+    print(tokenizer.model_max_length)
     model.resize_token_embeddings(len(tokenizer))
 
-    freq_seqs = get_freq_sequences(data_args.data_dir, tokenizer)
+    freq_seqs = get_freq_sequences(data_args.data_dir, tokenizer) if model_args.trigram_loss else None
 
     # use task specific params
     use_task_specific_params(model, data_args.task)
+
 
     # set num_beams for evaluation
     if data_args.eval_beams is not None:
@@ -366,6 +371,14 @@ def main():
 
     dataset_class = Seq2SeqDataset if hasattr(tokenizer, "prepare_seq2seq_batch") else LegacySeq2SeqDataset
 
+    model.config.update(
+        {'early_stopping': True, 'length_penalty': 2.0, 'max_length': 600, 'min_length': 275, 'no_repeat_ngram_size': 3, 'num_beams': 4,
+        'max_position_embeddings': 1024
+        # 'n_positions': 1024,
+        # 'prefix': 'summarize: '
+        }
+    )
+
     # Get datasets
     train_dataset = (
         dataset_class(
@@ -406,6 +419,9 @@ def main():
         if training_args.do_predict
         else None
     )
+    # model.config.update({'n_positions': 1024})
+
+    # print(model.config)
 
     # Initialize our Trainer
     trainer = Seq2SeqTrainer(

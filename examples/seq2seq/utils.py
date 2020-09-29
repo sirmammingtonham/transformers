@@ -115,6 +115,7 @@ class AbstractSeq2SeqDataset(Dataset):
         assert min(self.src_lens) > 0, f"found empty line in {self.src_file}"
         self.tokenizer = tokenizer
         self.prefix = prefix if prefix is not None else ""
+        print(f'`{self.prefix}`')
 
         if n_obs is not None:
             self.src_lens = self.src_lens[:n_obs]

@@ -43,17 +43,57 @@ def generate_summaries_or_translations(
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     logger.info(f"Inferred tokenizer type: {tokenizer.__class__}")  # if this is wrong, check config.model_type.
 
-    start_time = time.time()
+    tokenizer.add_special_tokens({'additional_special_tokens': [
+            '<|HOME|>', '<|AWAY|>',
+            '<|PLAYER-START_POSITION|>', '<|PLAYER-MIN|>', '<|PLAYER-PTS|>', '<|PLAYER-FGM|>', '<|PLAYER-FGA|>', '<|PLAYER-FG_PCT|>', '<|PLAYER-FG3M|>', '<|PLAYER-FG3A|>', '<|PLAYER-FG3_PCT|>', '<|PLAYER-FTM|>', '<|PLAYER-FTA|>', '<|PLAYER-FT_PCT|>', '<|PLAYER-OREB|>', '<|PLAYER-DREB|>', '<|PLAYER-REB|>', '<|PLAYER-AST|>', '<|PLAYER-TO|>', '<|PLAYER-STL|>', '<|PLAYER-BLK|>', '<|PLAYER-PF|>', 
+            '<|TEAM-PTS_QTR1|>', '<|TEAM-PTS_QTR2|>', '<|TEAM-PTS_QTR3|>', '<|TEAM-PTS_QTR4|>', '<|TEAM-PTS|>', '<|TEAM-FG_PCT|>', '<|TEAM-FG3_PCT|>', '<|TEAM-FT_PCT|>', '<|TEAM-REB|>', '<|TEAM-AST|>', '<|TEAM-TOV|>', '<|TEAM-WINS|>', '<|TEAM-LOSSES|>', '<|TEAM-CITY|>', '<|TEAM-NAME|>', 
+        ]})
+    # model.resize_token_embeddings(len(tokenizer))
+
+    max_length = 600
+    min_length = 275
+
     # update config with task specific params
     use_task_specific_params(model, task)
+
+
+    start_time = time.time()
+
     if prefix is None:
         prefix = prefix or getattr(model.config, "prefix", "") or ""
+
+    batch = tokenizer(prefix + examples[0], return_tensors="pt", max_length=1024, truncation=True, padding="max_length").to(device)
+    summaries = model.generate(
+            input_ids=batch.input_ids,
+            attention_mask=batch.attention_mask,
+            # num_beams=4,
+            length_penalty=2.0,
+            max_length=max_length + 2,  # +2 from original because we start at step=1 and stop before max_length
+            min_length=min_length + 1,  # +1 from original because we start at step=1
+            no_repeat_ngram_size=3,
+            decoder_start_token_id=model.config.eos_token_id,
+            **generate_kwargs,
+        )
+    print(summaries[0])
+    print(len(summaries[0]))
+    dec = tokenizer.batch_decode(summaries, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    for hyp in dec:
+        print(hyp)
+
+    
+    
     for examples_chunk in tqdm(list(chunks(examples, batch_size))):
         examples_chunk = [prefix + text for text in examples_chunk]
-        batch = tokenizer(examples_chunk, return_tensors="pt", truncation=True, padding="longest").to(device)
+        batch = tokenizer(examples_chunk, return_tensors="pt", max_length=1024, truncation=True, padding="max_length").to(device)
         summaries = model.generate(
             input_ids=batch.input_ids,
             attention_mask=batch.attention_mask,
+            num_beams=4,
+            length_penalty=2.0,
+            max_length=max_length + 2,  # +2 from original because we start at step=1 and stop before max_length
+            min_length=min_length + 1,  # +1 from original because we start at step=1
+            no_repeat_ngram_size=3,
+            decoder_start_token_id=model.config.eos_token_id,
             **generate_kwargs,
         )
         dec = tokenizer.batch_decode(summaries, skip_special_tokens=True, clean_up_tokenization_spaces=False)
@@ -121,6 +161,8 @@ def run_generate(verbose=True):
     Path(args.save_path).parent.mkdir(exist_ok=True)
     if args.reference_path is None and Path(args.score_path).exists():
         warnings.warn(f"score_path {args.score_path} will be overwritten unless you type ctrl-c.")
+    
+    # args.prefix = "summarize: "
     runtime_metrics = generate_summaries_or_translations(
         examples,
         args.save_path,

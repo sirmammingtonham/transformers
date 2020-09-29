@@ -23,7 +23,8 @@ class Seq2SeqTrainer(Trainer):
     def __init__(self, freq_seqs, data_dir, **kwargs):
         super().__init__(**kwargs)
 
-        self.freq_seq = freq_seqs
+        self.freq_seqs = freq_seqs
+        print(self.freq_seqs)
         self.seq_loss_weight = 2
     
     def _trigram_penalty(self, output):
@@ -35,8 +36,8 @@ class Seq2SeqTrainer(Trainer):
                 probs = torch.argmax(output[batch], dim=-1)#.view(-1, self.config.vocab_size), dim=-1)
                 for i in range(0, len(probs)-2):
                     li = tuple(probs[i:i+2].tolist())
-                    if li in self.freq_seq:
-                        if self.freq_seq[li] != probs[i+2].cpu():
+                    if li in self.freq_seqs:
+                        if self.freq_seqs[li] != probs[i+2].cpu():
                             penalty_factor[batch] += 1
 
             penalty = torch.mean(penalty_factor)
@@ -76,7 +77,8 @@ class Seq2SeqTrainer(Trainer):
             loss, nll_loss = label_smoothed_nll_loss(
                 lprobs, labels, self.args.label_smoothing, ignore_index=ignore_index
             )
-        loss = loss + self._trigram_penalty(logits)
+        if self.freq_seqs is not None:
+            loss = loss + (self._trigram_penalty(logits) * 100)
         return loss
 
     def prediction_step(
@@ -103,11 +105,11 @@ class Seq2SeqTrainer(Trainer):
             A tuple with the loss, logits and labels (each being optional).
         """
         inputs = self._prepare_inputs(inputs)
-
+        config = self._actual_model(model).config
         max_length = (
-            model.config.max_generate_length
-            if hasattr(model.config, "max_generate_length")
-            else model.config.max_position_embeddings
+            config.max_generate_length
+            if hasattr(config, "max_generate_length")
+            else config.max_position_embeddings
         )
 
         with torch.no_grad():
@@ -116,18 +118,18 @@ class Seq2SeqTrainer(Trainer):
                     inputs["input_ids"],
                     attention_mask=inputs["attention_mask"],
                     use_cache=True,
-                    num_beams=model.config.num_beams,
+                    num_beams=config.num_beams,
                     max_length=max_length,
                 )
                 # in case the batch is shorter than max length, the output should be padded
                 generated_tokens = self._pad_tensors_to_max_len(
-                    generated_tokens, max_length, model.config.pad_token_id
+                    generated_tokens, max_length, config.pad_token_id
                 )
 
             labels_out = inputs.get("labels")
             outputs = model(**inputs)
             logits = outputs[1]
-            loss = self._compute_loss(logits, labels_out, model.config.pad_token_id)
+            loss = self._compute_loss(logits, labels_out, config.pad_token_id)
             loss = loss.mean().item()
             if self.args.prediction_loss_only:
                 logits = None
@@ -138,7 +140,7 @@ class Seq2SeqTrainer(Trainer):
             return (loss, None, None)
 
         labels_out = labels_out.detach()
-        labels = self._pad_tensors_to_max_len(labels_out, max_length, model.config.pad_token_id)
+        labels = self._pad_tensors_to_max_len(labels_out, max_length, config.pad_token_id)
         return (loss, logits.detach(), labels)
 
     def _pad_tensors_to_max_len(self, tensor, max_length, pad_token_id):
